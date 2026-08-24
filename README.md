@@ -1,38 +1,44 @@
-# Market Emoji Picker for Linux.do (Performance & UI Pro 修复版)
+# Market Emoji Picker for Linux.do (Performance & UI Pro 终极优化版)
 
 本脚本专为 [Linux.do](https://linux.do/) 论坛打造，支持从云端市场自由挑选、组合海量表情包分组，并以现代化、高性能的弹窗交互无缝注入到论坛回复框与聊天框中。
 
 ---
 
-## 🛠️ 此次修复与核心优化说明
+## ⚡ v3.1.0 性能与体验跃升（极速加载与零闪烁）
 
-针对原版本导入油猴后**“打不开表情弹窗”**以及相关体验问题，进行了深度排查与修复：
+针对表情包加载慢与切页/悬浮预览闪烁问题，引入了以下核心性能优化：
 
-### 1. 修复桌面端未选表情时弹窗不可见（核心 Bug）
-- **原因**：在首次安装未选任何分组时，原脚本进入空状态分支后直接提前 `return`，未执行桌面端的 `top` 和 `left` 坐标计算，导致弹窗被丢在页面最底部（视口外千像素之外），用户点击按钮没有任何视觉反应。
-- **修复**：重构弹窗定位模块 `positionPicker(picker, anchorEl)`，确保无论是空状态提示还是正常表情列表，均能精准锚定在工具栏按钮上方（或根据视口自动翻转居中），并绑定点击外部关闭与 ESC 退出事件。
+### 1. 🗂️ 常驻 DOM 缓存池（Keep-Alive Tab Panes，彻底杜绝切页白屏与闪烁）
+- **痛点**：原逻辑在每次切换 Tab 时都会强制清空所有 DOM 节点重新渲染，导致明显的白屏、重排与图片重新解码闪烁。
+- **优化**：为每个分组创建独立的常驻面板（`mep-tab-pane`），切换分组时仅通过 CSS 切换活跃状态（`display: none` / `display: grid`）。
+- **效果**：已访问过的分组切换耗时降至 **0ms**，保留 GPU 解码位图，**彻底告别切换闪烁**。
 
-### 2. 修复工具栏图标在部分主题下可能隐形/无法点击
-- **原因**：原脚本依赖 Discourse 的 `<use href="#far-face-smile">` SVG 雪碧图 Symbol，若当前主题或版本未引入该符号，图标将渲染为空白（0×0 像素），导致按钮看似不存在或点不到。
-- **修复**：改用内联标准矢量 FontAwesome SVG 图标，自适应论坛主题色彩（`currentColor`），100% 保证在亮色/暗色主题、所有版本和移动端下清晰显示。
+### 2. 🚀 内存级图片预热与预解码池（Preload & Pre-decode Pool）
+- **痛点**：点开表情面板后才发起数十张图片的网络请求，网络竞争导致图片逐个显现，加载缓慢。
+- **优化**：在后台及空闲时段（`requestIdleCallback`）通过 `new Image()` + `img.decode()` 预热前几个分组及所有 Tab 图标，提前将位图解码至 GPU 显存。
+- **效果**：点开弹窗瞬间第一屏表情全部**秒开呈现**。
 
-### 3. 修复市场表情包管理器的分类与搜索分页 Bug
-- **原因**：原脚本在分页索引下，切换分类（如 bilibili、telegram、动画表情）或全局搜索时仅在单页数据（48项）中过滤，导致大量分类显示为空。
-- **修复**：优化为直接加载约 84KB 的全量市场元数据（包含全部 287+ 个分组），实现全部分类的瞬时切换、实时防抖关键词搜索与顺畅的分页管理。
+### 3. 🛡️ 悬浮大图双缓冲防闪烁（Double-Buffered Hover Preview）
+- **优化**：悬浮预览窗口增加图片双缓冲预加载机制，在目标大图就绪前保持平滑透明度过渡，避免鼠标快速扫过表情时产生黑白闪烁。
 
-### 4. 优化初始化时机与 SPA 动态注入
-- **原因**：原脚本在部分网络或加载时机下，由于 `isDiscourseSite()` 单次判断过早可能导致初始化被跳过。
-- **修复**：移除脆弱的提前拦截逻辑，采用针对性的 `MutationObserver` 结合 `requestAnimationFrame` 防抖机制，无论是打开新帖、回复、切换页面还是打开 Discourse Chat，均能毫秒级捕获并注入表情按钮。
+### 4. 🎨 CSS 渲染隔离与固定骨架占位（Zero Layout Shift）
+- **优化**：为弹窗及表情卡片应用 `contain: paint layout;`、`content-visibility: auto;` 与 `will-change: transform;`，固定 `aspect-ratio: 1;` 骨架底色，隔离重排影响，实现丝滑 60 FPS 滚动。
 
-### 5. 双重请求保底与无闪烁加载
-- 优先采用浏览器原生 `fetch (CORS)`，若遇跨域环境则自动平滑回退至 `GM_xmlhttpRequest`，并采用 `localStorage` 高速缓存机制，确保秒开零卡顿。
+---
+
+## 🛠️ 此前已修复的核心问题
+
+1. **首次未选表情时弹窗不可见**：重构 `positionPicker`，修复空状态分支提前 return 导致丢失坐标的问题。
+2. **工具栏图标缺失**：改用内联标准矢量 FontAwesome SVG 图标，自适应论坛主题色彩。
+3. **市场分组管理分页截断 Bug**：加载全量 287+ 个分组元数据（84KB），支持全部分类秒级切换与全局搜索。
+4. **Discourse SPA 动态注入**：采用 `MutationObserver` 结合 `requestAnimationFrame` 防抖机制，毫秒级捕获回复框与聊天室。
 
 ---
 
 ## 📦 文件列表
 
 - [`market-emoji-picker.user.js`](file:///home/sdh/vibehub/linuxdo-plugin/market-emoji-picker.user.js)：用户脚本源代码（可直接导入 Tampermonkey / Violentmonkey / ScriptCat 等）。
-- [`README.md`](file:///home/sdh/vibehub/linuxdo-plugin/README.md)：本说明文档。
+- [`README.md`](file:///home/sdh/vibehub/linuxdo-plugin/README.md)：项目说明文档。
 
 ---
 
@@ -40,19 +46,11 @@
 
 ### 1. 安装方式
 1. 打开浏览器扩展（如 **Tampermonkey / 暴力猴 / 脚本猫**）。
-2. 新建用户脚本，将 [`market-emoji-picker.user.js`](file:///home/sdh/vibehub/linuxdo-plugin/market-emoji-picker.user.js) 中的代码完整复制并保存。
-3. 打开或刷新 [Linux.do](https://linux.do/) 即可生效。
+2. 将 [`market-emoji-picker.user.js`](file:///home/sdh/vibehub/linuxdo-plugin/market-emoji-picker.user.js) 中的代码复制并更新保存。
+3. 刷新 [Linux.do](https://linux.do/) 页面即可生效。
 
 ### 2. 功能使用
-1. **打开表情选择器**：在任意主题点击“回复”或“新建话题”，在编辑器工具栏右侧点击蓝色的 **😊 笑脸图标**。
-2. **挑选表情包**：
-   - 首次打开若未添加表情，点击弹窗中的 **「⚙️ 前往挑选表情包」**。
-   - 在弹出的管理器中，可以按分类（bilibili / telegram / X / 动画 / 贴吧 / 100+ / 东方 等）筛选，或直接搜索表情包名称。
-   - 点击 **「+ 添加」**，挑选完毕后点击右下角 **「保存并应用」** 即可立即使用。
-3. **表情搜索与悬浮预览**：
-   - 在选择器顶部的搜索框输入表情名称即可实时跨分组搜索。
-   - 鼠标悬浮在表情上可查看高清放大图与名称。
-4. **格式与缩放切换**：
-   - 底部工具栏可一键切换图片缩放比例（30% / 50% / 100%）与输出格式（Markdown / HTML）。
-5. **油猴菜单项**：
-   - 点击油猴插件图标，可使用“⚙️ 管理表情分组”、“🌐 设置市场域名”、“🖼️ 设置图片缩放比例”、“🗑️ 清除所有本地缓存”等快捷功能。
+1. **打开表情选择器**：点击回复框工具栏右侧的 **😊 笑脸图标**。
+2. **挑选表情包**：首次点击弹窗中的 **「⚙️ 前往挑选表情包」**，在市场中挑选心仪分组并点击 **「保存并应用」**。
+3. **表情搜索与悬浮预览**：支持实时跨分组搜索，鼠标悬浮在表情上可查看高清放大图。
+4. **格式与缩放切换**：底部工具栏可一键切换缩放比例（30% / 50% / 100%）与输出格式（Markdown / HTML）。

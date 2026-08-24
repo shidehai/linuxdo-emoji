@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Market Emoji Picker for Linux.do (Performance & UI Pro)
 // @namespace    https://linux.do/
-// @version      3.0.1
-// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（按需渲染、防闪烁、懒加载、现代UI）
+// @version      3.1.0
+// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（常驻DOM缓存、瞬时切页、预加载预解码、零闪烁、现代UI）
 // @author       stevessr (Optimized & Fixed)
 // @match        https://linux.do/*
 // @match        https://*.linux.do/*
@@ -45,6 +45,52 @@
   let marketGroups = []
   let marketTopics = []
   let selectedEmojiGroups = []
+
+  // 内存预加载缓存池
+  const preloadedImageUrls = new Set()
+  function preloadImages(urls, priority = 'low') {
+    if (!urls || !Array.isArray(urls) || urls.length === 0) return
+    const batch = urls.slice(0, 100)
+    batch.forEach(url => {
+      if (!url || preloadedImageUrls.has(url)) return
+      preloadedImageUrls.add(url)
+      const img = new Image()
+      img.decoding = 'async'
+      img.loading = priority === 'high' ? 'eager' : 'lazy'
+      img.src = url
+      if (typeof img.decode === 'function') {
+        img.decode().catch(() => {})
+      }
+    })
+  }
+
+  // 后台预热前几个分组的表情图片
+  function warmupEmojiCache() {
+    if (!selectedEmojiGroups || selectedEmojiGroups.length === 0) return
+    const warmupUrls = []
+    // 优先预热前 2 个分组的所有表情及全部 Tab 图标
+    selectedEmojiGroups.slice(0, 2).forEach(g => {
+      if (g.icon) warmupUrls.push(g.icon)
+      ;(g.emojis || []).forEach(e => {
+        if (e.displayUrl || e.url) warmupUrls.push(e.displayUrl || e.url)
+      })
+    })
+    preloadImages(warmupUrls, 'high')
+
+    // 空闲时段预热其余表情包
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => {
+        const restUrls = []
+        selectedEmojiGroups.slice(2).forEach(g => {
+          if (g.icon) restUrls.push(g.icon)
+          ;(g.emojis || []).forEach(e => {
+            if (e.displayUrl || e.url) restUrls.push(e.displayUrl || e.url)
+          })
+        })
+        preloadImages(restUrls, 'low')
+      })
+    }
+  }
 
   // ============== 设备检测 ==============
   function isMobile() {
@@ -107,6 +153,7 @@
     localStorage.removeItem('emoji_market_cache_timestamp')
     localStorage.removeItem('emoji_groups_cache')
     localStorage.removeItem('emoji_groups_cache_timestamp')
+    preloadedImageUrls.clear()
   }
 
   // ============== 存储与缓存管理 ==============
@@ -198,11 +245,10 @@
   }
 
   function getGroupFileUrl(groupId) {
-    // 兼容 group- 前缀
     return `${CONFIG.marketBaseUrl}/assets/market/group-${groupId}.json`
   }
 
-  // 加载全量市场元数据（全部分组信息，约 80KB）
+  // 加载全量市场元数据（全部分组信息，约 84KB）
   async function loadMarketMetadata(forceRefresh = false) {
     if (!forceRefresh && isCacheValid(MARKET_CACHE_TIME_KEY)) {
       const cached = loadCache(MARKET_CACHE_KEY)
@@ -210,7 +256,6 @@
         marketMetadata = cached
         marketGroups = cached.groups
         marketTopics = extractTopicsFromGroups(marketGroups)
-        // 后台静默刷新
         refreshMarketInBackground()
         return marketMetadata
       }
@@ -285,6 +330,7 @@
       const cached = loadCache(GROUPS_CACHE_KEY)
       if (cached && Array.isArray(cached) && cached.length > 0) {
         selectedEmojiGroups = cached
+        warmupEmojiCache()
         refreshGroupsInBackground()
         return selectedEmojiGroups
       }
@@ -306,6 +352,7 @@
       if (groups.length > 0) {
         selectedEmojiGroups = groups
         saveCache(GROUPS_CACHE_KEY, groups)
+        warmupEmojiCache()
       }
       return selectedEmojiGroups
     } catch (e) {
@@ -365,11 +412,12 @@
       if (valid.length > 0) {
         selectedEmojiGroups = valid
         saveCache(GROUPS_CACHE_KEY, valid)
+        warmupEmojiCache()
       }
     })
   }
 
-  // ============== 现代化样式注入 ==============
+  // ============== 现代化极致流畅样式注入 ==============
   function injectStyles() {
     if (document.getElementById('market-emoji-picker-pro-styles')) return
 
@@ -391,7 +439,7 @@
         --mep-radius-sm: 6px;
         --mep-radius-md: 10px;
         --mep-radius-lg: 14px;
-        --mep-shadow-lg: 0 12px 36px -4px rgba(0, 0, 0, 0.22), 0 4px 16px rgba(0, 0, 0, 0.1);
+        --mep-shadow-lg: 0 12px 36px -4px rgba(0, 0, 0, 0.24), 0 4px 16px rgba(0, 0, 0, 0.1);
         --mep-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
       }
 
@@ -420,8 +468,9 @@
         font-family: inherit;
         opacity: 0;
         transform: translateY(6px) scale(0.98);
-        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
         pointer-events: auto;
+        contain: content;
       }
 
       .mep-picker.mep-visible {
@@ -582,9 +631,10 @@
         height: 16px;
         object-fit: contain;
         border-radius: 3px;
+        flex-shrink: 0;
       }
 
-      /* 表情内容展示区 */
+      /* 表情内容展示区与常驻 Tab Panes */
       .mep-content {
         flex: 1;
         overflow-y: auto;
@@ -592,6 +642,7 @@
         overscroll-behavior: contain;
         scrollbar-width: thin;
         scrollbar-color: var(--mep-border) transparent;
+        contain: paint layout;
       }
 
       .mep-content::-webkit-scrollbar {
@@ -603,13 +654,20 @@
         border-radius: 3px;
       }
 
-      .mep-grid {
+      .mep-tab-pane {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+        gap: 6px;
+        content-visibility: auto;
+      }
+
+      .mep-search-pane {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
         gap: 6px;
       }
 
-      /* 独立表情项卡片 */
+      /* 独立表情项卡片：固定尺寸防抖动与骨架底色 */
       .mep-emoji-item {
         position: relative;
         width: 100%;
@@ -618,16 +676,18 @@
         align-items: center;
         justify-content: center;
         border-radius: var(--mep-radius-sm);
-        background: transparent;
+        background: var(--mep-surface);
         cursor: pointer;
-        padding: 3px;
-        transition: background-color 0.12s ease, transform 0.1s ease;
+        padding: 4px;
+        transition: transform 0.12s ease, background-color 0.15s ease;
         user-select: none;
+        contain: strict;
+        will-change: transform;
       }
 
       .mep-emoji-item:hover {
         background: var(--mep-surface-hover);
-        transform: translateY(-1px);
+        transform: translateY(-1px) scale(1.04);
       }
 
       .mep-emoji-item:active {
@@ -640,6 +700,12 @@
         object-fit: contain;
         border-radius: 4px;
         pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+
+      .mep-emoji-img.loaded {
+        opacity: 1;
       }
 
       /* 底部状态栏 */
@@ -688,7 +754,7 @@
         color: var(--mep-text);
       }
 
-      /* 悬浮大图预览 */
+      /* 悬浮大图预览（双缓冲防闪烁） */
       .mep-hover-preview {
         position: fixed;
         pointer-events: none;
@@ -702,11 +768,11 @@
         padding: 8px;
         backdrop-filter: blur(16px);
         transform: translateZ(0);
-        animation: mep-fade-in 0.12s ease-out;
+        animation: mep-fade-in 0.1s ease-out;
       }
 
       @keyframes mep-fade-in {
-        from { opacity: 0; transform: scale(0.95); }
+        from { opacity: 0; transform: scale(0.96); }
         to { opacity: 1; transform: scale(1); }
       }
 
@@ -717,6 +783,7 @@
         margin: 0 auto;
         object-fit: contain;
         border-radius: 4px;
+        transition: opacity 0.1s ease;
       }
 
       .mep-hover-preview .mep-label {
@@ -811,7 +878,7 @@
         flex-direction: column;
         overflow: hidden;
         transform: translateY(100%);
-        transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
         pointer-events: auto;
       }
 
@@ -828,7 +895,8 @@
         font-size: 14px;
       }
 
-      .mep-modal-bottom .mep-grid {
+      .mep-modal-bottom .mep-tab-pane,
+      .mep-modal-bottom .mep-search-pane {
         grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
         gap: 8px;
       }
@@ -852,7 +920,7 @@
         flex-direction: column;
         overflow: hidden;
         opacity: 0;
-        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
         pointer-events: auto;
       }
 
@@ -934,6 +1002,7 @@
         flex: 1;
         overflow-y: auto;
         padding: 16px 20px;
+        contain: paint layout;
       }
 
       .mep-pack-grid {
@@ -950,7 +1019,7 @@
         background: var(--mep-surface);
         border: 1px solid var(--mep-border-subtle);
         border-radius: var(--mep-radius-md);
-        transition: all 0.15s ease;
+        transition: border-color 0.15s ease, background-color 0.15s ease;
       }
 
       .mep-pack-card:hover {
@@ -1087,7 +1156,7 @@
     document.head.appendChild(style)
   }
 
-  // ============== 悬浮预览单例 ==============
+  // ============== 悬浮预览单例（双缓冲防闪烁） ==============
   let hoverPreviewEl = null
   let hoverTimer = null
 
@@ -1110,9 +1179,26 @@
         const preview = getHoverPreviewEl()
         const img = preview.querySelector('img')
         const label = preview.querySelector('.mep-label')
+        const targetSrc = emoji.displayUrl || emoji.url
 
-        img.src = emoji.displayUrl || emoji.url
         label.textContent = emoji.name || ''
+
+        // 采用双缓冲预加载，避免切图时的黑白闪烁
+        const tempImg = new Image()
+        tempImg.src = targetSrc
+        if (tempImg.complete) {
+          img.src = targetSrc
+          img.style.opacity = '1'
+        } else {
+          img.style.opacity = '0.3'
+          img.src = targetSrc
+          tempImg.onload = () => {
+            if (preview.style.display === 'block') {
+              img.style.opacity = '1'
+            }
+          }
+        }
+
         preview.style.display = 'block'
         updatePreviewPosition(e, preview)
       }, 40)
@@ -1150,7 +1236,40 @@
     preview.style.top = `${Math.max(6, top)}px`
   }
 
-  // ============== 表情插入逻辑 ==============
+  // ============== 表情创建与插入逻辑 ==============
+  function createEmojiItem(emoji) {
+    const item = document.createElement('div')
+    item.className = 'mep-emoji-item'
+    item.title = emoji.name
+
+    const img = document.createElement('img')
+    img.className = 'mep-emoji-img'
+    img.alt = emoji.name
+    img.loading = 'lazy'
+    img.decoding = 'async'
+    img.src = emoji.displayUrl || emoji.url
+
+    // 内存已缓存直接常亮，未缓存平滑淡入
+    if (img.complete) {
+      img.classList.add('loaded')
+    } else {
+      img.onload = () => img.classList.add('loaded')
+      img.onerror = () => {
+        img.style.display = 'none'
+      }
+    }
+
+    item.appendChild(img)
+    bindHoverPreview(item, emoji)
+
+    item.onclick = async () => {
+      await insertEmoji(emoji)
+      closeActivePicker()
+    }
+
+    return item
+  }
+
   async function fetchImageData(url) {
     try {
       const response = await fetch(url, { mode: 'cors' })
@@ -1310,13 +1429,13 @@
     if (currentPicker) {
       const target = currentPicker
       target.classList.remove('mep-visible')
-      setTimeout(() => target.remove(), 180)
+      setTimeout(() => target.remove(), 160)
       currentPicker = null
     }
     if (currentBackdrop) {
       const target = currentBackdrop
       target.classList.remove('mep-visible')
-      setTimeout(() => target.remove(), 180)
+      setTimeout(() => target.remove(), 160)
       currentBackdrop = null
     }
   }
@@ -1350,7 +1469,6 @@
       }
       if (left < margin) left = margin
     } else {
-      // 若无锚点则屏幕居中
       top = Math.max(margin, (vh - pickerHeight) / 2)
       left = Math.max(margin, (vw - pickerWidth) / 2)
     }
@@ -1406,7 +1524,6 @@
 
       positionPicker(picker, anchorEl)
 
-      // 点击外部关闭监听
       if (!useMobile) {
         setTimeout(() => {
           outsideClickListener = e => {
@@ -1450,9 +1567,7 @@
         </div>
       </div>
       <div class="mep-tabs-bar"></div>
-      <div class="mep-content">
-        <div class="mep-grid"></div>
-      </div>
+      <div class="mep-content"></div>
       <div class="mep-footer">
         <div class="mep-footer-left">
           <span class="mep-status-text"></span>
@@ -1465,13 +1580,17 @@
     `
 
     const tabsBar = picker.querySelector('.mep-tabs-bar')
-    const gridEl = picker.querySelector('.mep-grid')
+    const contentEl = picker.querySelector('.mep-content')
     const searchInput = picker.querySelector('.mep-search-input')
     const searchClear = picker.querySelector('.mep-search-clear')
     const statusText = picker.querySelector('.mep-status-text')
     const previewToggleBtn = picker.querySelector('.mep-toggle-preview-btn')
     const formatBtn = picker.querySelector('.mep-format-btn')
     const scaleBtn = picker.querySelector('.mep-scale-btn')
+
+    // 常驻 DOM 缓存池：每个 groupId 对应一个常驻 mep-tab-pane
+    const tabPanesMap = new Map()
+    let searchPane = null
 
     // 绑定顶部动作
     picker.querySelector('.mep-close-btn').onclick = () => closeActivePicker()
@@ -1502,7 +1621,7 @@
       scaleBtn.textContent = `缩放: ${nextScale}%`
     }
 
-    // 渲染分组 Tab
+    // 渲染分组 Tab 项
     function renderTabs() {
       tabsBar.innerHTML = ''
       selectedEmojiGroups.forEach(group => {
@@ -1515,6 +1634,7 @@
           icon.className = 'mep-tab-icon'
           icon.src = group.icon
           icon.alt = group.name
+          icon.loading = 'lazy'
           btn.appendChild(icon)
         }
 
@@ -1524,69 +1644,82 @@
 
         btn.onclick = () => {
           if (activeGroupId === group.id && !searchInput.value.trim()) return
-          activeGroupId = group.id
-          CONFIG.activeGroupId = group.id
-          GM_setValue('lastActiveGroupId', group.id)
-          searchInput.value = ''
-          tabsBar.querySelectorAll('.mep-tab-item').forEach(t => t.classList.remove('active'))
-          btn.classList.add('active')
-          renderActiveTabEmojis()
+          switchTab(group.id)
         }
 
         tabsBar.appendChild(btn)
       })
     }
 
-    // 按需渲染当前激活 Tab 表情
-    function renderActiveTabEmojis() {
-      gridEl.innerHTML = ''
-      const group = selectedEmojiGroups.find(g => g.id === activeGroupId)
-      if (!group || !group.emojis || group.emojis.length === 0) {
-        gridEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">该分组暂无表情</div>'
-        statusText.textContent = `${group?.name || ''}`
-        return
-      }
+    // 瞬间切页（常驻 DOM 缓存，0ms 切换，彻底杜绝闪烁）
+    function switchTab(groupId) {
+      activeGroupId = groupId
+      CONFIG.activeGroupId = groupId
+      GM_setValue('lastActiveGroupId', groupId)
+      searchInput.value = ''
 
-      statusText.textContent = `${group.name} (${group.emojis.length})`
+      tabsBar.style.display = 'flex'
+      if (searchPane) searchPane.style.display = 'none'
 
-      const fragment = document.createDocumentFragment()
-      group.emojis.forEach(emoji => {
-        const item = document.createElement('div')
-        item.className = 'mep-emoji-item'
-        item.title = emoji.name
-
-        const img = document.createElement('img')
-        img.className = 'mep-emoji-img'
-        img.alt = emoji.name
-        img.src = emoji.displayUrl || emoji.url
-        img.loading = 'lazy'
-
-        item.appendChild(img)
-        bindHoverPreview(item, emoji)
-
-        item.onclick = async () => {
-          await insertEmoji(emoji)
-          closeActivePicker()
-        }
-
-        fragment.appendChild(item)
+      tabsBar.querySelectorAll('.mep-tab-item').forEach(t => {
+        t.classList.toggle('active', t.dataset.groupId === groupId)
       })
 
-      gridEl.appendChild(fragment)
+      // 隐藏其他 Tab Pane
+      tabPanesMap.forEach(pane => {
+        pane.style.display = 'none'
+      })
+
+      // 获取或创建当前 Tab Pane
+      let currentPane = tabPanesMap.get(groupId)
+      const group = selectedEmojiGroups.find(g => g.id === groupId)
+
+      if (!currentPane) {
+        currentPane = document.createElement('div')
+        currentPane.className = 'mep-tab-pane'
+        currentPane.dataset.groupId = groupId
+
+        if (!group || !group.emojis || group.emojis.length === 0) {
+          currentPane.innerHTML =
+            '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">该分组暂无表情</div>'
+        } else {
+          const fragment = document.createDocumentFragment()
+          group.emojis.forEach(emoji => {
+            fragment.appendChild(createEmojiItem(emoji))
+          })
+          currentPane.appendChild(fragment)
+        }
+
+        contentEl.appendChild(currentPane)
+        tabPanesMap.set(groupId, currentPane)
+      }
+
+      currentPane.style.display = 'grid'
+      statusText.textContent = group ? `${group.name} (${group.emojis?.length || 0})` : ''
     }
 
-    // 全局关键词搜索过滤（跨选中的所有分组）
+    // 全局关键词搜索过滤（专用 Search Pane）
     let searchDebounceTimer = null
     function handleSearch() {
       const query = searchInput.value.trim().toLowerCase()
       if (!query) {
-        tabsBar.style.display = 'flex'
-        renderActiveTabEmojis()
+        switchTab(activeGroupId)
         return
       }
 
       tabsBar.style.display = 'none'
-      gridEl.innerHTML = ''
+      tabPanesMap.forEach(pane => {
+        pane.style.display = 'none'
+      })
+
+      if (!searchPane) {
+        searchPane = document.createElement('div')
+        searchPane.className = 'mep-search-pane'
+        contentEl.appendChild(searchPane)
+      }
+
+      searchPane.innerHTML = ''
+      searchPane.style.display = 'grid'
 
       const matchedEmojis = []
       selectedEmojiGroups.forEach(group => {
@@ -1600,44 +1733,27 @@
       statusText.textContent = `搜索结果 (${matchedEmojis.length})`
 
       if (matchedEmojis.length === 0) {
-        gridEl.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">未找到匹配的表情</div>'
+        searchPane.innerHTML =
+          '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">未找到匹配的表情</div>'
         return
       }
 
       const fragment = document.createDocumentFragment()
       matchedEmojis.slice(0, 150).forEach(emoji => {
-        const item = document.createElement('div')
-        item.className = 'mep-emoji-item'
-        item.title = emoji.name
-
-        const img = document.createElement('img')
-        img.className = 'mep-emoji-img'
-        img.alt = emoji.name
-        img.src = emoji.displayUrl || emoji.url
-        img.loading = 'lazy'
-
-        item.appendChild(img)
-        bindHoverPreview(item, emoji)
-
-        item.onclick = async () => {
-          await insertEmoji(emoji)
-          closeActivePicker()
-        }
-
-        fragment.appendChild(item)
+        fragment.appendChild(createEmojiItem(emoji))
       })
 
-      gridEl.appendChild(fragment)
+      searchPane.appendChild(fragment)
     }
 
     searchInput.addEventListener('input', () => {
       clearTimeout(searchDebounceTimer)
-      searchDebounceTimer = setTimeout(handleSearch, 100)
+      searchDebounceTimer = setTimeout(handleSearch, 80)
     })
 
     searchClear.onclick = () => {
       searchInput.value = ''
-      handleSearch()
+      switchTab(activeGroupId)
     }
 
     // 支持鼠标滚轮横向滚动 Tab 栏
@@ -1650,7 +1766,7 @@
 
     // 初始化渲染
     renderTabs()
-    renderActiveTabEmojis()
+    switchTab(activeGroupId)
 
     document.body.appendChild(picker)
     currentPicker = picker
@@ -1673,7 +1789,7 @@
       }, 50)
     }
 
-    // 显示动画
+    // 触发平滑进入动画
     requestAnimationFrame(() => {
       if (currentBackdrop) currentBackdrop.classList.add('mep-visible')
       picker.classList.add('mep-visible')
@@ -1820,6 +1936,9 @@
         avatar.src = group.icon || 'https://cdn3.ldstatic.com/optimized/3X/9/d/9dd49731091ce8656e94433a26a3ef76f9c0f8d9_2_32x32.png'
         avatar.alt = group.name
         avatar.loading = 'lazy'
+        avatar.onerror = () => {
+          avatar.src = 'https://cdn3.ldstatic.com/optimized/3X/9/d/9dd49731091ce8656e94433a26a3ef76f9c0f8d9_2_32x32.png'
+        }
         card.appendChild(avatar)
 
         const info = document.createElement('div')
@@ -1924,7 +2043,7 @@
         managerBackdrop?.remove()
         managerModal = null
         managerBackdrop = null
-      }, 200)
+      }, 180)
     }
   }
 
@@ -1965,7 +2084,6 @@
     btn.title = '市场表情包 (Market Emoji Pro)'
     btn.type = 'button'
     btn.dataset.marketEmojiInjected = 'true'
-    // 注入内联 FontAwesome face-smile SVG，保证跨主题、跨版本 100% 渲染正常
     btn.innerHTML = `
       <svg class="fa d-icon svg-icon svg-string" viewBox="0 0 512 512" aria-hidden="true" style="width:1.05em;height:1.05em;fill:currentColor;">
         <path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM164.1 325.5C182 346.2 212.6 368 256 368s74-21.8 91.9-42.5c5.8-6.7 15.9-7.4 22.6-1.6s7.4 15.9 1.6 22.6C349.8 372.1 311.1 400 256 400s-93.8-27.9-116.1-53.5c-5.8-6.7-5.1-16.8 1.6-22.6s16.8-5.1 22.6 1.6zM144.4 208a32 32 0 1 1 64 0 32 32 0 1 1 -64 0zm192-32a32 32 0 1 1 0 64 32 32 0 1 1 0-64z"/>
@@ -1995,7 +2113,6 @@
 
     attemptInjection()
 
-    // 监听 DOM 变化以应对 Discourse SPA 页面路由切换和 Composer 弹出
     let injectionTimer = null
     const scheduleInjection = () => {
       if (injectionTimer) return
