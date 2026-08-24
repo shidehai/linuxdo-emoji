@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Market Emoji Picker for Linux.do (Performance & UI Pro)
 // @namespace    https://linux.do/
-// @version      3.1.0
-// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（常驻DOM缓存、瞬时切页、预加载预解码、零闪烁、现代UI）
+// @version      3.2.0
+// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（支持表情收藏、常驻DOM缓存、瞬时切页、预加载预解码、零闪烁、现代UI）
 // @author       stevessr (Optimized & Fixed)
 // @match        https://linux.do/*
 // @match        https://*.linux.do/*
@@ -37,7 +37,7 @@
     viewMode: GM_getValue('viewMode', 'auto'),
     selectedGroupIds: GM_getValue('selectedGroupIds', []),
     uploadToDiscourse: GM_getValue('uploadToDiscourse', false),
-    activeGroupId: GM_getValue('lastActiveGroupId', '')
+    activeGroupId: GM_getValue('lastActiveGroupId', 'favorites')
   }
 
   // 状态变量
@@ -45,6 +45,7 @@
   let marketGroups = []
   let marketTopics = []
   let selectedEmojiGroups = []
+  let favoriteEmojis = GM_getValue('favoriteEmojis', [])
 
   // 内存预加载缓存池
   const preloadedImageUrls = new Set()
@@ -64,17 +65,24 @@
     })
   }
 
-  // 后台预热前几个分组的表情图片
+  // 后台预热收藏与前序分组表情
   function warmupEmojiCache() {
-    if (!selectedEmojiGroups || selectedEmojiGroups.length === 0) return
     const warmupUrls = []
-    // 优先预热前 2 个分组的所有表情及全部 Tab 图标
-    selectedEmojiGroups.slice(0, 2).forEach(g => {
-      if (g.icon) warmupUrls.push(g.icon)
-      ;(g.emojis || []).forEach(e => {
-        if (e.displayUrl || e.url) warmupUrls.push(e.displayUrl || e.url)
-      })
+    // 优先预热收藏夹表情
+    favoriteEmojis.slice(0, 50).forEach(e => {
+      if (e.displayUrl || e.url) warmupUrls.push(e.displayUrl || e.url)
     })
+
+    // 预热前 2 个分组表情及所有 Tab 图标
+    if (selectedEmojiGroups && selectedEmojiGroups.length > 0) {
+      selectedEmojiGroups.slice(0, 2).forEach(g => {
+        if (g.icon) warmupUrls.push(g.icon)
+        ;(g.emojis || []).forEach(e => {
+          if (e.displayUrl || e.url) warmupUrls.push(e.displayUrl || e.url)
+        })
+      })
+    }
+
     preloadImages(warmupUrls, 'high')
 
     // 空闲时段预热其余表情包
@@ -92,6 +100,59 @@
     }
   }
 
+  // ============== 收藏夹核心管理 ==============
+  function isEmojiFavorited(emoji) {
+    if (!emoji) return false
+    return favoriteEmojis.some(f => (f.url && f.url === emoji.url) || (f.id && f.id === emoji.id))
+  }
+
+  function toggleFavoriteEmoji(emoji) {
+    if (!emoji || !emoji.url) return false
+    const idx = favoriteEmojis.findIndex(f => (f.url && f.url === emoji.url) || (f.id && f.id === emoji.id))
+    let isFav = false
+
+    if (idx > -1) {
+      favoriteEmojis.splice(idx, 1)
+      isFav = false
+      showToast('已移出收藏')
+    } else {
+      favoriteEmojis.unshift({
+        id: emoji.id || `fav-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: emoji.name || 'emoji',
+        url: emoji.url,
+        displayUrl: emoji.displayUrl || emoji.url,
+        width: emoji.width || 0,
+        height: emoji.height || 0,
+        groupId: emoji.groupId || 'favorites',
+        favoritedAt: Date.now()
+      })
+      isFav = true
+      showToast('⭐ 已添加到收藏')
+    }
+
+    GM_setValue('favoriteEmojis', favoriteEmojis)
+    updateAllFavoriteUI(emoji, isFav)
+    return isFav
+  }
+
+  // 轻量级 Toast 提示
+  let toastTimer = null
+  function showToast(msg) {
+    let toast = document.getElementById('mep-toast')
+    if (!toast) {
+      toast = document.createElement('div')
+      toast.id = 'mep-toast'
+      toast.className = 'mep-toast'
+      document.body.appendChild(toast)
+    }
+    toast.textContent = msg
+    toast.classList.add('visible')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => {
+      toast.classList.remove('visible')
+    }, 1400)
+  }
+
   // ============== 设备检测 ==============
   function isMobile() {
     const userAgent = navigator.userAgent || ''
@@ -106,6 +167,18 @@
   }
 
   // ============== 油猴菜单注册 ==============
+  GM_registerMenuCommand('⭐ 管理/清空我的收藏', () => {
+    if (favoriteEmojis.length === 0) {
+      alert('当前收藏夹为空，您可在选择器中右键表情进行收藏！')
+      return
+    }
+    if (confirm(`当前共收藏了 ${favoriteEmojis.length} 个表情，是否清空所有收藏？`)) {
+      favoriteEmojis = []
+      GM_setValue('favoriteEmojis', [])
+      updateAllFavoriteUI(null, false)
+      alert('收藏夹已清空！')
+    }
+  })
   GM_registerMenuCommand('⚙️ 管理表情分组', () => showGroupManager())
   GM_registerMenuCommand('🌐 设置市场域名', () => {
     const current = CONFIG.marketBaseUrl.replace(/^https?:\/\//, '')
@@ -199,7 +272,6 @@
         return
       }
 
-      // 优先使用 fetch，若被跨域限制则使用 GM_xmlhttpRequest
       const tryFetch = () => {
         return fetch(url, { mode: 'cors' })
           .then(res => {
@@ -323,6 +395,7 @@
   async function loadSelectedGroups() {
     if (!CONFIG.selectedGroupIds || CONFIG.selectedGroupIds.length === 0) {
       selectedEmojiGroups = []
+      warmupEmojiCache()
       return []
     }
 
@@ -433,6 +506,8 @@
         --mep-accent: var(--tertiary, #0088cc);
         --mep-accent-hover: var(--tertiary-hover, #0077b3);
         --mep-accent-bg: rgba(0, 136, 204, 0.12);
+        --mep-gold: #f5a623;
+        --mep-gold-bg: rgba(245, 166, 35, 0.15);
         --mep-danger: var(--danger, #e53935);
         --mep-danger-hover: #d32f2f;
         --mep-danger-bg: rgba(229, 57, 53, 0.1);
@@ -598,7 +673,7 @@
       .mep-tab-item {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 5px;
         height: 28px;
         padding: 0 10px;
         border-radius: 14px;
@@ -624,6 +699,10 @@
         color: var(--mep-accent);
         border-color: var(--mep-border-subtle);
         box-shadow: var(--mep-shadow-sm);
+      }
+
+      .mep-tab-item.fav-tab.active {
+        color: var(--mep-gold);
       }
 
       .mep-tab-icon {
@@ -708,6 +787,26 @@
         opacity: 1;
       }
 
+      /* 收藏星星小角标 */
+      .mep-star-badge {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        font-size: 9px;
+        line-height: 1;
+        color: var(--mep-gold);
+        opacity: 0;
+        transform: scale(0.6);
+        transition: opacity 0.15s ease, transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+        pointer-events: none;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+      }
+
+      .mep-emoji-item.is-fav .mep-star-badge {
+        opacity: 1;
+        transform: scale(1);
+      }
+
       /* 底部状态栏 */
       .mep-footer {
         display: flex;
@@ -754,13 +853,13 @@
         color: var(--mep-text);
       }
 
-      /* 悬浮大图预览（双缓冲防闪烁） */
+      /* 悬浮大图预览（双缓冲防闪烁 + 收藏快捷按钮） */
       .mep-hover-preview {
         position: fixed;
-        pointer-events: none;
+        pointer-events: auto;
         display: none;
         z-index: 1000005;
-        max-width: 260px;
+        max-width: 270px;
         background: var(--mep-bg);
         border: 1px solid var(--mep-border);
         border-radius: var(--mep-radius-md);
@@ -774,6 +873,34 @@
       @keyframes mep-fade-in {
         from { opacity: 0; transform: scale(0.96); }
         to { opacity: 1; transform: scale(1); }
+      }
+
+      .mep-preview-top-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        margin-bottom: 4px;
+      }
+
+      .mep-preview-star-btn {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: var(--mep-text-muted);
+        transition: transform 0.12s, color 0.15s, background-color 0.15s;
+      }
+
+      .mep-preview-star-btn:hover {
+        background: var(--mep-surface-hover);
+        transform: scale(1.15);
+      }
+
+      .mep-preview-star-btn.active {
+        color: var(--mep-gold);
       }
 
       .mep-hover-preview img {
@@ -847,6 +974,62 @@
       .mep-btn-primary:hover {
         background: var(--mep-accent-hover);
         transform: translateY(-1px);
+      }
+
+      /* 收藏夹专属空状态 */
+      .mep-fav-empty {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 16px;
+        text-align: center;
+        color: var(--mep-text-muted);
+      }
+
+      .mep-fav-empty-icon {
+        font-size: 32px;
+        margin-bottom: 8px;
+        color: var(--mep-gold);
+      }
+
+      .mep-fav-empty-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--mep-text);
+        margin-bottom: 4px;
+      }
+
+      .mep-fav-empty-desc {
+        font-size: 12px;
+        line-height: 1.5;
+        max-width: 260px;
+      }
+
+      /* 轻量 Toast 提示 */
+      .mep-toast {
+        position: fixed;
+        top: 24px;
+        left: 50%;
+        transform: translateX(-50%) translateY(-20px);
+        background: rgba(20, 24, 30, 0.88);
+        color: #ffffff;
+        padding: 7px 16px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+        z-index: 1000010;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+      }
+
+      .mep-toast.visible {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
       }
 
       /* ================= 移动端弹窗适配 ================= */
@@ -1156,15 +1339,30 @@
     document.head.appendChild(style)
   }
 
-  // ============== 悬浮预览单例（双缓冲防闪烁） ==============
+  // ============== 悬浮预览单例（双缓冲防闪烁 + 收藏按钮） ==============
   let hoverPreviewEl = null
   let hoverTimer = null
+  let currentPreviewEmoji = null
 
   function getHoverPreviewEl() {
     if (!hoverPreviewEl) {
       hoverPreviewEl = document.createElement('div')
       hoverPreviewEl.className = 'mep-hover-preview'
-      hoverPreviewEl.innerHTML = '<img><div class="mep-label"></div>'
+      hoverPreviewEl.innerHTML = `
+        <div class="mep-preview-top-actions">
+          <button class="mep-preview-star-btn" title="收藏 / 取消收藏">⭐</button>
+        </div>
+        <img>
+        <div class="mep-label"></div>
+      `
+      const starBtn = hoverPreviewEl.querySelector('.mep-preview-star-btn')
+      starBtn.onclick = e => {
+        e.stopPropagation()
+        if (currentPreviewEmoji) {
+          const isFav = toggleFavoriteEmoji(currentPreviewEmoji)
+          starBtn.classList.toggle('active', isFav)
+        }
+      }
       document.body.appendChild(hoverPreviewEl)
     }
     return hoverPreviewEl
@@ -1176,12 +1374,15 @@
     element.addEventListener('mouseenter', e => {
       clearTimeout(hoverTimer)
       hoverTimer = setTimeout(() => {
+        currentPreviewEmoji = emoji
         const preview = getHoverPreviewEl()
         const img = preview.querySelector('img')
         const label = preview.querySelector('.mep-label')
+        const starBtn = preview.querySelector('.mep-preview-star-btn')
         const targetSrc = emoji.displayUrl || emoji.url
 
         label.textContent = emoji.name || ''
+        starBtn.classList.toggle('active', isEmojiFavorited(emoji))
 
         // 采用双缓冲预加载，避免切图时的黑白闪烁
         const tempImg = new Image()
@@ -1236,11 +1437,34 @@
     preview.style.top = `${Math.max(6, top)}px`
   }
 
+  // 跨面板更新所有收藏状态指示器
+  let globalUpdateFavoritesCallback = null
+  function updateAllFavoriteUI(targetEmoji, isFav) {
+    if (hoverPreviewEl && currentPreviewEmoji) {
+      const starBtn = hoverPreviewEl.querySelector('.mep-preview-star-btn')
+      if (starBtn) {
+        starBtn.classList.toggle('active', isEmojiFavorited(currentPreviewEmoji))
+      }
+    }
+    if (document.body) {
+      document.querySelectorAll('.mep-emoji-item').forEach(item => {
+        const itemUrl = item.dataset.emojiUrl
+        if (targetEmoji && itemUrl === targetEmoji.url) {
+          item.classList.toggle('is-fav', isFav)
+        }
+      })
+    }
+    if (globalUpdateFavoritesCallback) {
+      globalUpdateFavoritesCallback()
+    }
+  }
+
   // ============== 表情创建与插入逻辑 ==============
   function createEmojiItem(emoji) {
     const item = document.createElement('div')
-    item.className = 'mep-emoji-item'
-    item.title = emoji.name
+    item.className = `mep-emoji-item ${isEmojiFavorited(emoji) ? 'is-fav' : ''}`
+    item.title = `${emoji.name} (右键/长按可收藏)`
+    item.dataset.emojiUrl = emoji.url || ''
 
     const img = document.createElement('img')
     img.className = 'mep-emoji-img'
@@ -1259,13 +1483,40 @@
       }
     }
 
+    const starBadge = document.createElement('span')
+    starBadge.className = 'mep-star-badge'
+    starBadge.textContent = '★'
+
     item.appendChild(img)
+    item.appendChild(starBadge)
     bindHoverPreview(item, emoji)
 
+    // 左键插入表情
     item.onclick = async () => {
       await insertEmoji(emoji)
       closeActivePicker()
     }
+
+    // 右键一键收藏/取消收藏
+    item.oncontextmenu = e => {
+      e.preventDefault()
+      e.stopPropagation()
+      toggleFavoriteEmoji(emoji)
+    }
+
+    // 移动端长按收藏支持
+    let touchTimer = null
+    item.addEventListener(
+      'touchstart',
+      () => {
+        touchTimer = setTimeout(() => {
+          toggleFavoriteEmoji(emoji)
+        }, 450)
+      },
+      { passive: true }
+    )
+    item.addEventListener('touchend', () => clearTimeout(touchTimer), { passive: true })
+    item.addEventListener('touchmove', () => clearTimeout(touchTimer), { passive: true })
 
     return item
   }
@@ -1438,6 +1689,7 @@
       setTimeout(() => target.remove(), 160)
       currentBackdrop = null
     }
+    globalUpdateFavoritesCallback = null
   }
 
   // 计算并设置选择器位置
@@ -1454,7 +1706,6 @@
 
     if (anchorEl && typeof anchorEl.getBoundingClientRect === 'function') {
       const rect = anchorEl.getBoundingClientRect()
-      // Discourse 编辑器工具栏通常位于底部，优先向上展开
       if (rect.top - pickerHeight - margin >= 10) {
         top = rect.top - pickerHeight - margin
       } else if (rect.bottom + pickerHeight + margin <= vh - 10) {
@@ -1495,61 +1746,13 @@
     const picker = document.createElement('div')
     picker.className = useMobile ? 'mep-modal-bottom' : 'mep-picker'
 
-    // 检查是否有选中的分组
-    if (selectedEmojiGroups.length === 0) {
-      picker.innerHTML = `
-        <div class="mep-header">
-          <div style="font-weight:600;font-size:14px;color:var(--mep-text);display:flex;align-items:center;gap:6px;">
-            <span>✨</span><span>表情选择器</span>
-          </div>
-          <div class="mep-header-actions" style="margin-left:auto;">
-            <button class="mep-icon-btn mep-close-btn" title="关闭">✕</button>
-          </div>
-        </div>
-        <div class="mep-empty-state">
-          <div class="mep-empty-icon">📦</div>
-          <div class="mep-empty-title">尚未添加任何表情包</div>
-          <div class="mep-empty-desc">前往云端表情市场，挑选并添加您喜欢的表情分组吧！</div>
-          <button class="mep-btn-primary mep-manage-btn">⚙️ 前往挑选表情包</button>
-        </div>
-      `
-      picker.querySelector('.mep-close-btn').onclick = () => closeActivePicker()
-      picker.querySelector('.mep-manage-btn').onclick = () => {
-        closeActivePicker()
-        showGroupManager()
-      }
-
-      document.body.appendChild(picker)
-      currentPicker = picker
-
-      positionPicker(picker, anchorEl)
-
-      if (!useMobile) {
-        setTimeout(() => {
-          outsideClickListener = e => {
-            if (
-              currentPicker &&
-              !currentPicker.contains(e.target) &&
-              (!anchorEl || !anchorEl.contains(e.target))
-            ) {
-              closeActivePicker()
-            }
-          }
-          document.addEventListener('pointerdown', outsideClickListener, true)
-        }, 50)
-      }
-
-      requestAnimationFrame(() => {
-        if (currentBackdrop) currentBackdrop.classList.add('mep-visible')
-        picker.classList.add('mep-visible')
-      })
-      return
-    }
-
-    // 确定默认激活分组
-    let activeGroupId = CONFIG.activeGroupId
-    if (!selectedEmojiGroups.some(g => g.id === activeGroupId)) {
-      activeGroupId = selectedEmojiGroups[0].id
+    // 确定默认激活分组（若无激活则默认 favorites 收藏夹）
+    let activeGroupId = CONFIG.activeGroupId || 'favorites'
+    if (
+      activeGroupId !== 'favorites' &&
+      !selectedEmojiGroups.some(g => g.id === activeGroupId)
+    ) {
+      activeGroupId = selectedEmojiGroups.length > 0 ? selectedEmojiGroups[0].id : 'favorites'
     }
 
     // 渲染 Picker 主结构
@@ -1621,9 +1824,19 @@
       scaleBtn.textContent = `缩放: ${nextScale}%`
     }
 
-    // 渲染分组 Tab 项
+    // 渲染分组 Tab 项（⭐ 收藏夹永远置顶居首）
     function renderTabs() {
       tabsBar.innerHTML = ''
+
+      // 1. 收藏 Tab
+      const favBtn = document.createElement('button')
+      favBtn.className = `mep-tab-item fav-tab ${activeGroupId === 'favorites' ? 'active' : ''}`
+      favBtn.dataset.groupId = 'favorites'
+      favBtn.innerHTML = `<span>⭐</span><span>收藏</span>`
+      favBtn.onclick = () => switchTab('favorites')
+      tabsBar.appendChild(favBtn)
+
+      // 2. 选中的其他表情包 Tab
       selectedEmojiGroups.forEach(group => {
         const btn = document.createElement('button')
         btn.className = `mep-tab-item ${group.id === activeGroupId ? 'active' : ''}`
@@ -1651,6 +1864,35 @@
       })
     }
 
+    // 刷新收藏夹面板内容
+    function refreshFavoritesPane() {
+      let favPane = tabPanesMap.get('favorites')
+      if (!favPane) return
+
+      favPane.innerHTML = ''
+      if (favoriteEmojis.length === 0) {
+        favPane.innerHTML = `
+          <div class="mep-fav-empty">
+            <div class="mep-fav-empty-icon">⭐</div>
+            <div class="mep-fav-empty-title">暂无收藏的表情</div>
+            <div class="mep-fav-empty-desc">在任意表情上【鼠标右键】或在预览卡片点击【⭐】即可快速加入收藏！</div>
+          </div>
+        `
+      } else {
+        const fragment = document.createDocumentFragment()
+        favoriteEmojis.forEach(emoji => {
+          fragment.appendChild(createEmojiItem(emoji))
+        })
+        favPane.appendChild(fragment)
+      }
+
+      if (activeGroupId === 'favorites') {
+        statusText.textContent = `⭐ 我的收藏 (${favoriteEmojis.length})`
+      }
+    }
+
+    globalUpdateFavoritesCallback = refreshFavoritesPane
+
     // 瞬间切页（常驻 DOM 缓存，0ms 切换，彻底杜绝闪烁）
     function switchTab(groupId) {
       activeGroupId = groupId
@@ -1672,33 +1914,44 @@
 
       // 获取或创建当前 Tab Pane
       let currentPane = tabPanesMap.get(groupId)
-      const group = selectedEmojiGroups.find(g => g.id === groupId)
 
-      if (!currentPane) {
-        currentPane = document.createElement('div')
-        currentPane.className = 'mep-tab-pane'
-        currentPane.dataset.groupId = groupId
-
-        if (!group || !group.emojis || group.emojis.length === 0) {
-          currentPane.innerHTML =
-            '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">该分组暂无表情</div>'
-        } else {
-          const fragment = document.createDocumentFragment()
-          group.emojis.forEach(emoji => {
-            fragment.appendChild(createEmojiItem(emoji))
-          })
-          currentPane.appendChild(fragment)
+      if (groupId === 'favorites') {
+        if (!currentPane) {
+          currentPane = document.createElement('div')
+          currentPane.className = 'mep-tab-pane'
+          currentPane.dataset.groupId = 'favorites'
+          contentEl.appendChild(currentPane)
+          tabPanesMap.set('favorites', currentPane)
         }
+        refreshFavoritesPane()
+      } else {
+        const group = selectedEmojiGroups.find(g => g.id === groupId)
+        if (!currentPane) {
+          currentPane = document.createElement('div')
+          currentPane.className = 'mep-tab-pane'
+          currentPane.dataset.groupId = groupId
 
-        contentEl.appendChild(currentPane)
-        tabPanesMap.set(groupId, currentPane)
+          if (!group || !group.emojis || group.emojis.length === 0) {
+            currentPane.innerHTML =
+              '<div style="grid-column:1/-1;text-align:center;padding:30px;color:var(--mep-text-muted);font-size:12px;">该分组暂无表情</div>'
+          } else {
+            const fragment = document.createDocumentFragment()
+            group.emojis.forEach(emoji => {
+              fragment.appendChild(createEmojiItem(emoji))
+            })
+            currentPane.appendChild(fragment)
+          }
+
+          contentEl.appendChild(currentPane)
+          tabPanesMap.set(groupId, currentPane)
+        }
+        statusText.textContent = group ? `${group.name} (${group.emojis?.length || 0})` : ''
       }
 
       currentPane.style.display = 'grid'
-      statusText.textContent = group ? `${group.name} (${group.emojis?.length || 0})` : ''
     }
 
-    // 全局关键词搜索过滤（专用 Search Pane）
+    // 全局关键词搜索过滤（专用 Search Pane，同时搜索收藏夹与选中的分组）
     let searchDebounceTimer = null
     function handleSearch() {
       const query = searchInput.value.trim().toLowerCase()
@@ -1722,10 +1975,22 @@
       searchPane.style.display = 'grid'
 
       const matchedEmojis = []
+      const seenUrls = new Set()
+
+      // 搜索收藏夹
+      favoriteEmojis.forEach(emoji => {
+        if ((emoji.name || '').toLowerCase().includes(query)) {
+          matchedEmojis.push(emoji)
+          seenUrls.add(emoji.url)
+        }
+      })
+
+      // 搜索所有选中分组
       selectedEmojiGroups.forEach(group => {
         ;(group.emojis || []).forEach(emoji => {
-          if ((emoji.name || '').toLowerCase().includes(query)) {
+          if (!seenUrls.has(emoji.url) && (emoji.name || '').toLowerCase().includes(query)) {
             matchedEmojis.push(emoji)
+            seenUrls.add(emoji.url)
           }
         })
       })
@@ -1780,7 +2045,8 @@
           if (
             currentPicker &&
             !currentPicker.contains(e.target) &&
-            (!anchorEl || !anchorEl.contains(e.target))
+            (!anchorEl || !anchorEl.contains(e.target)) &&
+            (!hoverPreviewEl || !hoverPreviewEl.contains(e.target))
           ) {
             closeActivePicker()
           }
