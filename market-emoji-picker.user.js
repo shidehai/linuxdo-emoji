@@ -1,16 +1,19 @@
 // ==UserScript==
 // @name         Market Emoji Picker for Linux.do (Performance & UI Pro)
 // @namespace    https://linux.do/
-// @version      3.3.0
-// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（IndexedDB二进制离线缓存、并行高并发加载、分片渐进渲染、表情收藏、零闪烁、现代UI）
+// @version      3.4.0
+// @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（版本直显、GitHub一键在线更新、IndexedDB二进制离线缓存、并行高并发加载、分片渐进渲染、表情收藏、零闪烁、现代UI）
 // @author       stevessr (Optimized & Fixed)
 // @match        https://linux.do/*
 // @match        https://*.linux.do/*
 // @icon         https://cdn3.ldstatic.com/optimized/3X/9/d/9dd49731091ce8656e94433a26a3ef76f9c0f8d9_2_32x32.png
+// @updateURL    https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js
+// @downloadURL  https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_openInTab
 // @connect      *
 // @run-at       document-idle
 // @license      MIT
@@ -27,7 +30,11 @@
   }
   window[INSTANCE_FLAG] = true
 
-  // ============== 配置 ==============
+  // ============== 常量与配置 ==============
+  const CURRENT_VERSION = '3.4.0'
+  const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js'
+  const GITHUB_REPO_URL = 'https://github.com/shidehai/linuxdo-plugin'
+
   const CONFIG = {
     marketBaseUrl: GM_getValue('marketBaseUrl', 'https://s.pwsh.us.kg'),
     cacheDuration: 24 * 60 * 60 * 1000, // 24小时元数据缓存
@@ -46,6 +53,77 @@
   let marketTopics = []
   let selectedEmojiGroups = []
   let favoriteEmojis = GM_getValue('favoriteEmojis', [])
+  let hasNewVersionAvailable = false
+
+  // ============== 智能在线更新检测 ==============
+  function compareVersions(v1, v2) {
+    const p1 = (v1 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
+    const p2 = (v2 || '').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0)
+    for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+      const a = p1[i] || 0
+      const b = p2[i] || 0
+      if (a > b) return 1
+      if (a < b) return -1
+    }
+    return 0
+  }
+
+  async function checkForUpdates(manual = false) {
+    if (manual) showToast('🔍 正在检查 GitHub 最新版本...')
+
+    try {
+      const res = await new Promise((resolve, reject) => {
+        const url = `${GITHUB_RAW_URL}?_t=${Date.now()}`
+        if (typeof GM_xmlhttpRequest !== 'undefined') {
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: url,
+            timeout: 10000,
+            onload: r => resolve(r.responseText),
+            onerror: reject,
+            ontimeout: reject
+          })
+        } else {
+          fetch(url, { cache: 'no-store' })
+            .then(r => r.text())
+            .then(resolve)
+            .catch(reject)
+        }
+      })
+
+      const match = res.match(/@version\s+([0-9.]+)/)
+      if (match && match[1]) {
+        const remoteVersion = match[1]
+        if (compareVersions(remoteVersion, CURRENT_VERSION) > 0) {
+          hasNewVersionAvailable = true
+          updateVersionBadges(remoteVersion)
+          if (confirm(`🎉 发现新版本 v${remoteVersion}（当前版本 v${CURRENT_VERSION}）！\n\n是否立即通过 GitHub 原链更新？\n(点击“确定”将打开油猴安装页面)`)) {
+            window.open(GITHUB_RAW_URL, '_blank')
+          }
+          return remoteVersion
+        } else if (manual) {
+          showToast(`✅ 当前已是最新版本 (v${CURRENT_VERSION})`)
+        }
+      } else if (manual) {
+        showToast('⚠️ 检查更新失败：未解析到版本号')
+      }
+    } catch (e) {
+      if (manual) {
+        if (confirm(`⚠️ 无法直接访问 GitHub Raw 接口，是否前往 GitHub 项目主页手动查看更新？`)) {
+          window.open(GITHUB_REPO_URL, '_blank')
+        }
+      }
+    }
+    return null
+  }
+
+  function updateVersionBadges(remoteVersion) {
+    document.querySelectorAll('.mep-version-btn').forEach(btn => {
+      btn.textContent = `v${CURRENT_VERSION} 🚀`
+      btn.title = `发现新版本 v${remoteVersion}，点击立即更新！`
+      btn.classList.add('has-update')
+    })
+  }
 
   // ============== IndexedDB 二进制离线图片缓存 ==============
   const DB_NAME = 'MarketEmojiCacheDB_v3'
@@ -254,6 +332,7 @@
   }
 
   // ============== 油猴菜单注册 ==============
+  GM_registerMenuCommand('🚀 检查 GitHub 最新版本', () => checkForUpdates(true))
   GM_registerMenuCommand('⭐ 管理/清空我的收藏', () => {
     if (favoriteEmojis.length === 0) {
       alert('当前收藏夹为空，您可在选择器中右键表情进行收藏！')
@@ -306,6 +385,9 @@
     alert('缓存与离线图片已清空，正在重新加载数据')
     loadMarketMetadata(true).catch(() => {})
     loadSelectedGroups().catch(() => {})
+  })
+  GM_registerMenuCommand('🔗 访问 GitHub 项目主页', () => {
+    window.open(GITHUB_REPO_URL, '_blank')
   })
 
   async function clearAllCache() {
@@ -909,7 +991,7 @@
         transform: scale(1);
       }
 
-      /* 底部状态栏 */
+      /* 底部状态栏与版本直显 */
       .mep-footer {
         display: flex;
         align-items: center;
@@ -953,6 +1035,41 @@
       .mep-badge-btn:hover {
         background: var(--mep-surface-hover);
         color: var(--mep-text);
+      }
+
+      .mep-version-btn {
+        font-weight: 600;
+        color: var(--mep-accent);
+        border-color: var(--mep-accent-bg);
+        background: var(--mep-accent-bg);
+      }
+
+      .mep-version-btn:hover {
+        background: var(--mep-accent);
+        color: #ffffff;
+      }
+
+      .mep-version-btn.has-update {
+        background: var(--mep-gold-bg);
+        color: var(--mep-gold);
+        border-color: var(--mep-gold);
+        animation: mep-pulse 1.5s infinite;
+      }
+
+      @keyframes mep-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.06); }
+      }
+
+      .mep-version-tag {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--mep-accent-bg);
+        color: var(--mep-accent);
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 6px;
       }
 
       /* 悬浮大图预览（双缓冲防闪烁 + 收藏快捷按钮） */
@@ -1931,6 +2048,7 @@
           <span class="mep-status-text"></span>
         </div>
         <div class="mep-footer-right">
+          <button class="mep-badge-btn mep-version-btn ${hasNewVersionAvailable ? 'has-update' : ''}" title="当前版本 v${CURRENT_VERSION} (点击检查 GitHub 更新)">v${CURRENT_VERSION}</button>
           <button class="mep-badge-btn mep-scale-btn" title="点击修改缩放比例">缩放: ${CONFIG.imageScale}%</button>
           <button class="mep-badge-btn mep-format-btn" title="点击切换格式">${CONFIG.outputFormat.toUpperCase()}</button>
         </div>
@@ -1945,16 +2063,21 @@
     const previewToggleBtn = picker.querySelector('.mep-toggle-preview-btn')
     const formatBtn = picker.querySelector('.mep-format-btn')
     const scaleBtn = picker.querySelector('.mep-scale-btn')
+    const versionBtn = picker.querySelector('.mep-version-btn')
 
     // 常驻 DOM 缓存池：每个 groupId 对应一个常驻 mep-tab-pane
     const tabPanesMap = new Map()
     let searchPane = null
 
-    // 绑定顶部动作
+    // 绑定顶部与底部动作
     picker.querySelector('.mep-close-btn').onclick = () => closeActivePicker()
     picker.querySelector('.mep-open-manager-btn').onclick = () => {
       closeActivePicker()
       showGroupManager()
+    }
+
+    versionBtn.onclick = () => {
+      checkForUpdates(true)
     }
 
     previewToggleBtn.onclick = () => {
@@ -2234,6 +2357,7 @@
         <div class="mep-manager-title">
           <span>📦</span>
           <span>表情包市场 & 分组管理</span>
+          <span class="mep-version-tag">v${CURRENT_VERSION}</span>
         </div>
         <button class="mep-icon-btn mep-manager-close" title="关闭">✕</button>
       </div>
@@ -2489,7 +2613,7 @@
 
     const btn = document.createElement('button')
     btn.className = 'btn no-text btn-icon market-emoji-toolbar-btn'
-    btn.title = '市场表情包 (Market Emoji Pro)'
+    btn.title = `市场表情包 (Market Emoji Pro v${CURRENT_VERSION})`
     btn.type = 'button'
     btn.dataset.marketEmojiInjected = 'true'
     btn.innerHTML = `
@@ -2520,6 +2644,13 @@
     loadSelectedGroups().catch(() => {})
 
     attemptInjection()
+
+    // 空闲时静默检查更新
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(() => checkForUpdates(false))
+    } else {
+      setTimeout(() => checkForUpdates(false), 3000)
+    }
 
     let injectionTimer = null
     const scheduleInjection = () => {
