@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Market Emoji Picker for Linux.do (Performance & UI Pro)
 // @namespace    https://linux.do/
-// @version      3.4.1
+// @version      3.4.2
 // @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（版本直显、GitHub一键在线更新、IndexedDB二进制离线缓存、并行高并发加载、分片渐进渲染、表情收藏、零闪烁、现代UI）
 // @author       stevessr (Optimized & Fixed)
 // @match        https://linux.do/*
@@ -31,7 +31,7 @@
   window[INSTANCE_FLAG] = true
 
   // ============== 常量与配置 ==============
-  const CURRENT_VERSION = '3.4.1'
+  const CURRENT_VERSION = '3.4.2'
   const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js'
   const GITHUB_REPO_URL = 'https://github.com/shidehai/linuxdo-emoji'
 
@@ -845,22 +845,90 @@
         background: var(--mep-accent-bg);
       }
 
+      /* 分组 Tab 导航栏容器 */
+      .mep-tabs-nav-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+        background: var(--mep-surface);
+        border-bottom: 1px solid var(--mep-border-subtle);
+        flex-shrink: 0;
+        width: 100%;
+        overflow: hidden;
+      }
+
+      .mep-tabs-scroll-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 28px;
+        border: none;
+        background: var(--mep-surface);
+        color: var(--mep-text-muted);
+        cursor: pointer;
+        font-size: 18px;
+        font-weight: bold;
+        line-height: 1;
+        flex-shrink: 0;
+        transition: all 0.15s ease;
+        z-index: 2;
+        padding: 0;
+        border-radius: var(--mep-radius-sm);
+        margin: 0 2px;
+        user-select: none;
+      }
+
+      .mep-tabs-scroll-btn:hover {
+        color: var(--mep-accent);
+        background: var(--mep-surface-hover);
+      }
+
+      .mep-tabs-scroll-btn.hidden {
+        display: none !important;
+      }
+
+      .mep-tabs-scroll-btn.disabled {
+        opacity: 0.25;
+        pointer-events: none;
+      }
+
       /* 分组 Tab 导航栏 */
       .mep-tabs-bar {
+        flex: 1;
         display: flex;
         align-items: center;
         gap: 4px;
-        padding: 6px 10px;
-        background: var(--mep-surface);
-        border-bottom: 1px solid var(--mep-border-subtle);
+        padding: 6px 4px;
+        background: transparent;
         overflow-x: auto;
         overflow-y: hidden;
-        flex-shrink: 0;
-        scrollbar-width: none;
+        flex-shrink: 1;
+        scroll-behavior: smooth;
+        scrollbar-width: thin;
+        scrollbar-color: var(--mep-border) transparent;
+        cursor: grab;
+      }
+
+      .mep-tabs-bar:active {
+        cursor: grabbing;
       }
 
       .mep-tabs-bar::-webkit-scrollbar {
-        display: none;
+        height: 3px;
+      }
+
+      .mep-tabs-bar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .mep-tabs-bar::-webkit-scrollbar-thumb {
+        background: var(--mep-border);
+        border-radius: 3px;
+      }
+
+      .mep-tabs-bar::-webkit-scrollbar-thumb:hover {
+        background: var(--mep-text-muted);
       }
 
       .mep-tab-item {
@@ -2050,7 +2118,11 @@
           <button class="mep-icon-btn mep-close-btn" title="关闭">✕</button>
         </div>
       </div>
-      <div class="mep-tabs-bar"></div>
+      <div class="mep-tabs-nav-wrap">
+        <button class="mep-tabs-scroll-btn mep-tabs-scroll-left hidden" title="向左滚动">‹</button>
+        <div class="mep-tabs-bar"></div>
+        <button class="mep-tabs-scroll-btn mep-tabs-scroll-right hidden" title="向右滚动">›</button>
+      </div>
       <div class="mep-content"></div>
       <div class="mep-footer">
         <div class="mep-footer-left">
@@ -2064,7 +2136,10 @@
       </div>
     `
 
+    const tabsNavWrap = picker.querySelector('.mep-tabs-nav-wrap')
     const tabsBar = picker.querySelector('.mep-tabs-bar')
+    const scrollLeftBtn = picker.querySelector('.mep-tabs-scroll-left')
+    const scrollRightBtn = picker.querySelector('.mep-tabs-scroll-right')
     const contentEl = picker.querySelector('.mep-content')
     const searchInput = picker.querySelector('.mep-search-input')
     const searchClear = picker.querySelector('.mep-search-clear')
@@ -2111,6 +2186,82 @@
       scaleBtn.textContent = `缩放: ${nextScale}%`
     }
 
+    // 更新 Tab 导航左右箭头状态
+    function updateScrollButtons() {
+      if (!tabsBar || !scrollLeftBtn || !scrollRightBtn) return
+      const hasOverflow = tabsBar.scrollWidth > tabsBar.clientWidth + 2
+      if (!hasOverflow) {
+        scrollLeftBtn.classList.add('hidden')
+        scrollRightBtn.classList.add('hidden')
+        return
+      }
+      scrollLeftBtn.classList.remove('hidden')
+      scrollRightBtn.classList.remove('hidden')
+
+      const isAtStart = tabsBar.scrollLeft <= 2
+      const isAtEnd = tabsBar.scrollLeft + tabsBar.clientWidth >= tabsBar.scrollWidth - 2
+
+      scrollLeftBtn.classList.toggle('disabled', isAtStart)
+      scrollRightBtn.classList.toggle('disabled', isAtEnd)
+    }
+
+    scrollLeftBtn.onclick = () => {
+      tabsBar.scrollBy({ left: -140, behavior: 'smooth' })
+      setTimeout(updateScrollButtons, 220)
+    }
+
+    scrollRightBtn.onclick = () => {
+      tabsBar.scrollBy({ left: 140, behavior: 'smooth' })
+      setTimeout(updateScrollButtons, 220)
+    }
+
+    tabsBar.addEventListener('scroll', () => {
+      updateScrollButtons()
+    }, { passive: true })
+
+    // 鼠标拖拽平移与滚轮滑动支持
+    let isMouseDown = false
+    let startX = 0
+    let startScrollLeft = 0
+    let hasDragged = false
+
+    tabsBar.addEventListener('mousedown', e => {
+      if (e.button !== 0) return
+      isMouseDown = true
+      hasDragged = false
+      startX = e.pageX
+      startScrollLeft = tabsBar.scrollLeft
+    })
+
+    window.addEventListener('mousemove', e => {
+      if (!isMouseDown) return
+      const dx = e.pageX - startX
+      if (Math.abs(dx) > 3) {
+        hasDragged = true
+      }
+      tabsBar.scrollLeft = startScrollLeft - dx
+      updateScrollButtons()
+    })
+
+    window.addEventListener('mouseup', () => {
+      if (isMouseDown) {
+        isMouseDown = false
+        setTimeout(() => {
+          hasDragged = false
+        }, 60)
+      }
+    })
+
+    // 支持鼠标滚轮横向滚动 Tab 栏
+    tabsBar.addEventListener('wheel', e => {
+      if (e.deltaY !== 0 || e.deltaX !== 0) {
+        e.preventDefault()
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY
+        tabsBar.scrollLeft += delta * 0.8
+        updateScrollButtons()
+      }
+    }, { passive: false })
+
     // 渲染分组 Tab 项（⭐ 收藏夹永远置顶居首）
     function renderTabs() {
       tabsBar.innerHTML = ''
@@ -2120,7 +2271,10 @@
       favBtn.className = `mep-tab-item fav-tab ${activeGroupId === 'favorites' ? 'active' : ''}`
       favBtn.dataset.groupId = 'favorites'
       favBtn.innerHTML = `<span>⭐</span><span>收藏</span>`
-      favBtn.onclick = () => switchTab('favorites')
+      favBtn.onclick = () => {
+        if (hasDragged) return
+        switchTab('favorites')
+      }
       tabsBar.appendChild(favBtn)
 
       // 2. 选中的其他表情包 Tab
@@ -2143,12 +2297,15 @@
         btn.appendChild(nameSpan)
 
         btn.onclick = () => {
+          if (hasDragged) return
           if (activeGroupId === group.id && !searchInput.value.trim()) return
           switchTab(group.id)
         }
 
         tabsBar.appendChild(btn)
       })
+
+      setTimeout(updateScrollButtons, 50)
     }
 
     // 刷新收藏夹面板内容
@@ -2183,12 +2340,17 @@
       GM_setValue('lastActiveGroupId', groupId)
       searchInput.value = ''
 
-      tabsBar.style.display = 'flex'
+      if (tabsNavWrap) tabsNavWrap.style.display = 'flex'
       if (searchPane) searchPane.style.display = 'none'
 
       tabsBar.querySelectorAll('.mep-tab-item').forEach(t => {
-        t.classList.toggle('active', t.dataset.groupId === groupId)
+        const isActive = t.dataset.groupId === groupId
+        t.classList.toggle('active', isActive)
+        if (isActive) {
+          t.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+        }
       })
+      setTimeout(updateScrollButtons, 260)
 
       // 隐藏其他 Tab Pane
       tabPanesMap.forEach(pane => {
@@ -2239,7 +2401,7 @@
         return
       }
 
-      tabsBar.style.display = 'none'
+      if (tabsNavWrap) tabsNavWrap.style.display = 'none'
       tabPanesMap.forEach(pane => {
         pane.style.display = 'none'
       })
@@ -2294,14 +2456,6 @@
       searchInput.value = ''
       switchTab(activeGroupId)
     }
-
-    // 支持鼠标滚轮横向滚动 Tab 栏
-    tabsBar.addEventListener('wheel', e => {
-      if (e.deltaY !== 0) {
-        e.preventDefault()
-        tabsBar.scrollLeft += e.deltaY * 0.8
-      }
-    }, { passive: false })
 
     // 初始化渲染
     renderTabs()
