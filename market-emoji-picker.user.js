@@ -7,8 +7,8 @@
 // @match        https://linux.do/*
 // @match        https://*.linux.do/*
 // @icon         https://cdn3.ldstatic.com/optimized/3X/9/d/9dd49731091ce8656e94433a26a3ef76f9c0f8d9_2_32x32.png
-// @updateURL    https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js
-// @downloadURL  https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js
+// @updateURL    https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js
+// @downloadURL  https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -32,8 +32,8 @@
 
   // ============== 常量与配置 ==============
   const CURRENT_VERSION = '3.4.1'
-  const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js'
-  const GITHUB_REPO_URL = 'https://github.com/shidehai/linuxdo-plugin'
+  const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js'
+  const GITHUB_REPO_URL = 'https://github.com/shidehai/linuxdo-emoji'
 
   const CONFIG = {
     marketBaseUrl: GM_getValue('marketBaseUrl', 'https://s.pwsh.us.kg'),
@@ -78,13 +78,17 @@
           GM_xmlhttpRequest({
             method: 'GET',
             url: url,
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache'
+            },
             timeout: 10000,
             onload: r => resolve(r.responseText),
             onerror: reject,
             ontimeout: reject
           })
         } else {
-          fetch(url, { cache: 'no-store' })
+          fetch(url, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } })
             .then(r => r.text())
             .then(resolve)
             .catch(reject)

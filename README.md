@@ -22,7 +22,7 @@
 - **机制一（全自动/油猴原生更新）**：
   脚本头部已配置标准 `@updateURL` 与 `@downloadURL`：
   ```
-  https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js
+  https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js
   ```
   在 Tampermonkey / Violentmonkey / 脚本猫 中点击 **「检查更新」** 或开启自动检查，扩展会自动从 GitHub 拉取最新版本并静默升级。
 - **机制二（弹窗内一键点击检查更新）**：
@@ -61,8 +61,8 @@
 ## 🚀 安装与更新指南
 
 ### 1. 一键安装 / 更新地址
-- **GitHub 原链直装**：[点击安装/更新最新版脚本](https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js)
-- **项目开源仓库**：[https://github.com/shidehai/linuxdo-plugin](https://github.com/shidehai/linuxdo-plugin)
+- **GitHub 原链直装**：[点击安装/更新最新版脚本](https://raw.githubusercontent.com/shidehai/linuxdo-emoji/main/market-emoji-picker.user.js)
+- **项目开源仓库**：[https://github.com/shidehai/linuxdo-emoji](https://github.com/shidehai/linuxdo-emoji)
 
 ### 2. 功能使用
 1. **打开表情选择器**：点击回复框工具栏右侧的 **😊 笑脸图标**。
