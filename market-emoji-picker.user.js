@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Market Emoji Picker for Linux.do (Performance & UI Pro)
 // @namespace    https://linux.do/
-// @version      3.4.0
+// @version      3.4.1
 // @description  从云端市场加载表情包并允许用户组合分组，注入高性能精美表情选择器到 Linux.do 论坛（版本直显、GitHub一键在线更新、IndexedDB二进制离线缓存、并行高并发加载、分片渐进渲染、表情收藏、零闪烁、现代UI）
 // @author       stevessr (Optimized & Fixed)
 // @match        https://linux.do/*
@@ -31,7 +31,7 @@
   window[INSTANCE_FLAG] = true
 
   // ============== 常量与配置 ==============
-  const CURRENT_VERSION = '3.4.0'
+  const CURRENT_VERSION = '3.4.1'
   const GITHUB_RAW_URL = 'https://raw.githubusercontent.com/shidehai/linuxdo-plugin/main/market-emoji-picker.user.js'
   const GITHUB_REPO_URL = 'https://github.com/shidehai/linuxdo-plugin'
 
@@ -494,7 +494,9 @@
   }
 
   function getGroupFileUrl(groupId) {
-    return `${CONFIG.marketBaseUrl}/assets/market/group-${groupId}.json`
+    if (!groupId) return ''
+    const cleanId = String(groupId).startsWith('group-') ? groupId : `group-${groupId}`
+    return `${CONFIG.marketBaseUrl}/assets/market/${cleanId}.json`
   }
 
   // 加载全量市场元数据（全部分组信息，约 84KB）
@@ -604,10 +606,13 @@
         .filter(r => r.status === 'fulfilled' && r.value)
         .map(r => r.value)
 
+      selectedEmojiGroups = groups
       if (groups.length > 0) {
-        selectedEmojiGroups = groups
         saveCache(GROUPS_CACHE_KEY, groups)
         warmupEmojiCache()
+      } else {
+        localStorage.removeItem(GROUPS_CACHE_KEY)
+        localStorage.removeItem(GROUPS_CACHE_TIME_KEY)
       }
       return selectedEmojiGroups
     } catch (e) {
@@ -2550,10 +2555,12 @@
       CONFIG.selectedGroupIds = tempSelectedGroupIds
       GM_setValue('selectedGroupIds', tempSelectedGroupIds)
       localStorage.removeItem(GROUPS_CACHE_TIME_KEY)
+      localStorage.removeItem(GROUPS_CACHE_KEY)
       await loadSelectedGroups()
       saveBtn.disabled = false
       saveBtn.textContent = '保存并应用'
       closeManagerModal()
+      showToast('✅ 表情分组已更新')
     }
 
     renderTopicPills()
